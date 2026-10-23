@@ -6,6 +6,8 @@ export interface Appliance {
   watts: number;
   hours: number;
   quantity: number;
+  frequency?: 'day' | 'week';
+
 }
 
 export interface SystemParams {
@@ -28,7 +30,7 @@ export interface BatterySpec {
 export interface PanelSpec {
   potenciaPico: number;
   vmp: number;
-  voc:number;
+  voc: number;
   imp: number;
   isc: number;
 }
@@ -82,9 +84,6 @@ export const defaultPanelSpec: PanelSpec = {
 };
 
 export const presetAppliances: Appliance[] = [
-  { id: '1', name: 'Nevera', watts: 150, hours: 24, quantity: 1 },
-  { id: '2', name: 'Luces LED', watts: 40, hours: 6, quantity: 1 },
-  { id: '3', name: 'Televisor', watts: 120, hours: 5, quantity: 1 },
 ];
 
 function ceil(value: number): number {
@@ -97,8 +96,13 @@ export function calculate(
   battery: BatterySpec,
   panel: PanelSpec
 ): SolarResults {
+  const getEffectiveHours = (a: Appliance) => {
+    const rawHours = a.hours || 0;
+    return a.frequency === 'week' ? rawHours / 7 : rawHours;
+  };
+
   const eCA = appliances.reduce(
-    (sum, a) => sum + a.watts * a.hours * a.quantity,
+    (sum, a) => sum + a.watts * getEffectiveHours(a) * a.quantity,
     0
   );
 
@@ -126,43 +130,48 @@ export function calculate(
   const mT = mS * mP;
   const pNI = mT * panel.potenciaPico;
 
-// 3. Cálculo del Inversor según la guía metodológica:
-  // Encontrar el artefacto que se usa más horas al día
+// 1. Encontrar el artefacto que se usa más horas al día (considerando horas efectivas si es semanal)
   const maxHorasApp = appliances.reduce(
-    (prev, current) => (current.hours > prev.hours ? current : prev),
-    appliances[0] || { watts: 0, quantity: 1, hours: 0 }
+    (prev, current) => {
+      const hoursPrev = prev.frequency === 'week' ? (prev.hours || 0) / 7 : (prev.hours || 0);
+      const hoursCurrent = current.frequency === 'week' ? (current.hours || 0) / 7 : (current.hours || 0);
+      return hoursCurrent > hoursPrev ? current : prev;
+    },
+    appliances[0] || { watts: 0, quantity: 1, hours: 0, frequency: 'day' }
   );
 
-  // Encontrar el aparato con mayor potencia individual
-  const maxPotenciaApp = appliances.reduce(
-    (prev, current) =>
-      current.watts * current.quantity > prev.watts * prev.quantity
-        ? current
-        : prev,
-    appliances[0] || { watts: 0, quantity: 1, hours: 0 }
+  // 2. Obtener los 3 aparatos con mayor potencia individual (watts * cantidad)
+  const top3PotenciaAppliances = [...appliances]
+    .sort((a, b) => (b.watts * b.quantity) - (a.watts * a.quantity))
+    .slice(0, 3);
+
+  // Potencia combinada de esos 3 aparatos principales
+  const potenciaTop3Combinada = top3PotenciaAppliances.reduce(
+    (sum, a) => sum + (a.watts * a.quantity),
+    0
   );
 
-  const maxPotenciaIndividual = maxPotenciaApp ? maxPotenciaApp.watts * maxPotenciaApp.quantity : 0;
-  
-  // Consumo del artefacto que opera más horas (actuando como la carga base/permanente principal)
+  // 3. Consumo del artefacto que opera más horas (carga base o permanente principal)
   const potenciaUsoProlongado = maxHorasApp ? maxHorasApp.watts * maxHorasApp.quantity : 0;
 
-  // Potencia simultánea (Ps): El equipo pico más exigente + la carga de mayor uso prolongado (evitando duplicar si es el mismo aparato)
-  const potenciaSimultanea =
-    maxPotenciaApp.id === maxHorasApp.id
-      ? maxPotenciaIndividual
-      : maxPotenciaIndividual + potenciaUsoProlongado;
+  // 4. Potencia simultánea (Ps): La combinación de los 3 equipos más potentes + la carga de mayor uso prolongado.
+  // Verificamos si el aparato de mayor uso prolongado ya está incluido dentro de los 3 más potentes para no duplicar su potencia.
+  const isMaxHorasInTop3 = top3PotenciaAppliances.some(a => a.id === maxHorasApp.id);
+
+  const potenciaSimultanea = isMaxHorasInTop3
+    ? potenciaTop3Combinada
+    : potenciaTop3Combinada + potenciaUsoProlongado;
 
   const eficienciaInversor = 0.9;
   const inversorMin = potenciaSimultanea / eficienciaInversor;
   const inversorRecomendado = selectComercialInverter(inversorMin);
   const corrienteRegulador = panel.imp * mP * 1.25;
-  const voltajeRegulador = (panel.voc*1.50);
+  const voltajeRegulador = (panel.voc * 1.50);
 
-  const compatible = 
-    aS >= 1 && 
-    battery.voltajeNominal > 0 && 
-    mS >= 1 && 
+  const compatible =
+    aS >= 1 &&
+    battery.voltajeNominal > 0 &&
+    mS >= 1 &&
     params.voltajeBanco % battery.voltajeNominal === 0;
 
   let compatMensaje = 'Configuración válida y compatible';
@@ -215,7 +224,7 @@ export function selectComercialInverter(calculatedWatts: number): number {
       return comercial;
     }
   }
-  
+
   // Si supera el catálogo comercial estándar, sugiere un margen del 20%
   return Math.ceil(calculatedWatts * 1.2 / 500) * 500;
 }

@@ -1,4 +1,6 @@
-import { Plus, Trash2, Zap, Clock, Lightbulb, Minus, X } from 'lucide-react';
+import React, { useRef } from 'react';
+import { Plus, Trash2, Zap, Clock, Lightbulb, Minus, X, Upload, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -21,10 +23,12 @@ interface LoadTableProps {
 }
 
 export function LoadTable({ appliances, onChange }: LoadTableProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const update = (id: string, field: keyof Appliance, value: string | number) => {
     onChange(
       appliances.map((a) =>
-        a.id === id ? { ...a, [field]: field === 'name' ? value : Number(value) } : a
+        a.id === id ? { ...a, [field]: field === 'name' || field === 'frequency' ? value : Number(value) } : a
       )
     );
   };
@@ -40,7 +44,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
   const addRow = () => {
     onChange([
       ...appliances,
-      { id: Date.now().toString(), name: '', watts: 0, hours: 0, quantity: 1 },
+      { id: Date.now().toString(), name: '', watts: 0, hours: 0, quantity: 1, frequency: 'day' },
     ]);
   };
 
@@ -48,8 +52,75 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
     onChange(appliances.filter((a) => a.id !== id));
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        
+        const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+        const newAppliances: Appliance[] = [];
+
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i];
+          if (!r || r.length === 0) continue;
+
+          const name = r[0] !== undefined && r[0] !== null ? String(r[0]).trim() : `Carga ${i}`;
+          const quantity = Number(r[1]) > 0 ? Number(r[1]) : 1;
+          const watts = Number(r[2]) >= 0 ? Number(r[2]) : 0;
+          const hours = Number(r[3]) >= 0 ? Number(r[3]) : 0;
+
+          const rawFreq = r[4] !== undefined && r[4] !== null ? String(r[4]).toLowerCase().trim() : 'day';
+          const frequency: 'day' | 'week' = rawFreq.includes('sem') || rawFreq.includes('week') || rawFreq === 'semana' ? 'week' : 'day';
+
+          if (name && watts > 0) {
+            newAppliances.push({
+              id: `${Date.now()}-${i}`,
+              name,
+              quantity,
+              watts,
+              hours,
+              frequency,
+            });
+          }
+        }
+
+        if (newAppliances.length > 0) {
+          onChange([...appliances, ...newAppliances]);
+        }
+      } catch (error) {
+        console.error('Error al procesar el archivo Excel:', error);
+      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const downloadTemplate = () => {
+    const templateData = [
+      { Carga: 'Lampara1', Cantidad: 12, Potencia_W: 12, Horas: 4, Frecuencia: 'day' },
+      { Carga: 'Nevera', Cantidad: 2, Potencia_W: 150, Horas: 12, Frecuencia: 'day' },
+      { Carga: 'Lavadora', Cantidad: 1, Potencia_W: 1000, Horas: 6, Frecuencia: 'week' },
+    ];
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Plantilla Cargas');
+    XLSX.writeFile(wb, 'Plantilla_Cargas_Solares.xlsx');
+  };
+
+  const getEffectiveHours = (a: Appliance) => {
+    const rawHours = a.hours || 0;
+    return a.frequency === 'week' ? rawHours / 7 : rawHours;
+  };
+
   const totalDiario = appliances.reduce(
-    (sum, a) => sum + a.watts * a.hours * a.quantity,
+    (sum, a) => sum + a.watts * getEffectiveHours(a) * a.quantity,
     0
   );
   const totalPotencia = appliances.reduce(
@@ -71,25 +142,55 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
               Cargas de la Vivienda (CA)
             </CardTitle>
             <CardDescription className="mt-1">
-              Agrega los electrodomésticos que usan corriente alterna (120V/60Hz). Especifica
-              cuántas unidades de cada uno usas.
+              Agrega manualmente o importa desde un archivo Excel los electrodomésticos en corriente alterna (120V/60Hz).
             </CardDescription>
           </div>
-          <Button onClick={addRow} className="bg-solar text-solar-deep hover:bg-solar/90">
-            <Plus className="mr-1.5 h-4 w-4" />
-            Agregar carga
-          </Button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept=".xlsx, .xls, .csv"
+              className="hidden"
+            />
+            
+            <Button
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              className="border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-200"
+            >
+              <Upload className="mr-1.5 h-4 w-4 text-cyan-400" />
+              Cargar Excel
+            </Button>
+
+            <Button onClick={addRow} className="bg-solar text-solar-deep hover:bg-solar/90">
+              <Plus className="mr-1.5 h-4 w-4" />
+              Agregar carga
+            </Button>
+          </div>
         </div>
       </CardHeader>
+
       <CardContent>
         {appliances.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border py-16 text-center">
             <Lightbulb className="h-10 w-10 text-muted-foreground/40" />
-            <p className="text-muted-foreground">No hay cargas. Agrega un electrodoméstico para empezar.</p>
-            <Button onClick={addRow} variant="outline" className="border-solar/40 text-solar hover:bg-solar/10">
-              <Plus className="mr-1.5 h-4 w-4" />
-              Agregar primera carga
-            </Button>
+            <p className="text-muted-foreground">No hay cargas. Agrega un electrodoméstico o importa una lista en Excel.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={addRow} variant="outline" className="border-solar/40 text-solar hover:bg-solar/10">
+                <Plus className="mr-1.5 h-4 w-4" />
+                Agregar primera carga
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={downloadTemplate}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                <FileSpreadsheet className="mr-1 h-3.5 w-3.5 text-emerald-500" />
+                Descargar plantilla Excel de ejemplo
+              </Button>
+            </div>
           </div>
         ) : (
           <>
@@ -98,24 +199,27 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
               <Table>
                 <TableHeader>
                   <TableRow className="border-border bg-muted/40 hover:bg-muted/40">
-                    <TableHead className="w-[26%]">Electrodoméstico</TableHead>
+                    <TableHead className="w-[24%]">Electrodoméstico</TableHead>
                     <TableHead className="w-[14%] text-center">Cantidad</TableHead>
                     <TableHead className="w-[14%]">Potencia (W)</TableHead>
-                    <TableHead className="w-[14%]">Horas/día</TableHead>
-                    <TableHead className="w-[16%] text-right">Subtotal (Wh/día)</TableHead>
+                    <TableHead className="w-[22%]">Tiempo de uso</TableHead>
+                    <TableHead className="w-[18%] text-right">Subtotal (Wh/día)</TableHead>
                     <TableHead className="w-[8%]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {appliances.map((a) => {
+                    const freq = a.frequency || 'day';
+                    const effectiveHours = getEffectiveHours(a);
                     const subtotalW = a.watts * a.quantity;
-                    const subtotalWh = a.watts * a.hours * a.quantity;
+                    const subtotalWh = a.watts * effectiveHours * a.quantity;
+
                     return (
                       <TableRow
                         key={a.id}
                         className="border-border transition-colors hover:bg-muted/30"
                       >
-                        <TableCell>
+                        <TableCell className="align-top pt-3">
                           <Input
                             value={a.name}
                             onChange={(e) => update(a.id, 'name', e.target.value)}
@@ -128,7 +232,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                             </p>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="align-top pt-3">
                           <div className="flex items-center justify-center gap-1">
                             <Button
                               variant="outline"
@@ -156,7 +260,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                             </Button>
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="align-top pt-3">
                           <Input
                             type="number"
                             min={0}
@@ -171,23 +275,38 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                             </p>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={0.5}
-                            value={a.hours || ''}
-                            onChange={(e) => update(a.id, 'hours', e.target.value)}
-                            placeholder="0"
-                            className="h-8 tabular-nums"
-                          />
+                        <TableCell className="align-top pt-3">
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              type="number"
+                              min={0}
+                              step={0.5}
+                              value={a.hours || ''}
+                              onChange={(e) => update(a.id, 'hours', e.target.value)}
+                              placeholder="0"
+                              className="h-8 w-20 tabular-nums"
+                            />
+                            <select
+                              value={freq}
+                              onChange={(e) => update(a.id, 'frequency', e.target.value)}
+                              className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                            >
+                              <option value="day">horas/día</option>
+                              <option value="week">horas/sem</option>
+                            </select>
+                          </div>
+                          {freq === 'week' && a.hours > 0 && (
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Equiv: {formatNumber(effectiveHours, 1)} h/día (÷ 7)
+                            </p>
+                          )}
                         </TableCell>
-                        <TableCell className="text-right font-medium tabular-nums">
+                        <TableCell className="align-top pt-4 text-right font-medium tabular-nums">
                           <span className={subtotalWh > 0 ? 'text-foreground' : 'text-muted-foreground'}>
                             {formatNumber(subtotalWh, 0)} Wh
                           </span>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="align-top pt-3">
                           <Button
                             variant="ghost"
                             size="icon"
@@ -237,8 +356,10 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
             {/* Mobile: Tarjetas */}
             <div className="space-y-3 md:hidden">
               {appliances.map((a) => {
-                const subtotalW = a.watts * a.quantity;
-                const subtotalWh = a.watts * a.hours * a.quantity;
+                const freq = a.frequency || 'day';
+                const effectiveHours = getEffectiveHours(a);
+                const subtotalWh = a.watts * effectiveHours * a.quantity;
+
                 return (
                   <div
                     key={a.id}
@@ -248,7 +369,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                       <Input
                         value={a.name}
                         onChange={(e) => update(a.id, 'name', e.target.value)}
-                        placeholder="Ej. Nevera"
+                        placeholder="Ej. Lavadora"
                         className="h-9 border-transparent bg-transparent font-medium focus-visible:border-input"
                       />
                       <Button
@@ -267,33 +388,33 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                       </p>
                     )}
 
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2 mt-2">
                       <div className="space-y-1">
                         <label className="text-xs text-muted-foreground">Cantidad</label>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5">
                           <Button
                             variant="outline"
                             size="icon"
-                            className="h-8 w-8 shrink-0 border-border"
+                            className="h-8 w-7 shrink-0 border-border"
                             onClick={() => adjustQty(a.id, -1)}
                             disabled={a.quantity <= 1}
                           >
-                            <Minus className="h-3.5 w-3.5" />
+                            <Minus className="h-3 w-3" />
                           </Button>
                           <Input
                             type="number"
                             min={1}
                             value={a.quantity}
                             onChange={(e) => update(a.id, 'quantity', e.target.value)}
-                            className="h-8 text-center tabular-nums"
+                            className="h-8 min-w-0 flex-1 px-0 text-center text-xs tabular-nums"
                           />
                           <Button
                             variant="outline"
                             size="icon"
-                            className="h-8 w-8 shrink-0 border-border"
+                            className="h-8 w-7 shrink-0 border-border"
                             onClick={() => adjustQty(a.id, 1)}
                           >
-                            <Plus className="h-3.5 w-3.5" />
+                            <Plus className="h-3 w-3" />
                           </Button>
                         </div>
                       </div>
@@ -308,8 +429,11 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                           className="h-8 tabular-nums"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs text-muted-foreground">Horas/día</label>
+                    </div>
+
+                    <div className="mt-2 space-y-1">
+                      <label className="text-xs text-muted-foreground">Tiempo de uso</label>
+                      <div className="flex items-center gap-2">
                         <Input
                           type="number"
                           min={0}
@@ -317,16 +441,27 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                           value={a.hours || ''}
                           onChange={(e) => update(a.id, 'hours', e.target.value)}
                           placeholder="0"
-                          className="h-8 tabular-nums"
+                          className="h-8 flex-1 tabular-nums"
                         />
+                        <select
+                          value={freq}
+                          onChange={(e) => update(a.id, 'frequency', e.target.value)}
+                          className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        >
+                          <option value="day">Horas / día</option>
+                          <option value="week">Horas / semana</option>
+                        </select>
                       </div>
+                      {freq === 'week' && a.hours > 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Equivale a {formatNumber(effectiveHours, 1)} h/día (dividido entre 7)
+                        </p>
+                      )}
                     </div>
 
                     <div className="mt-3 flex items-center justify-between rounded-md border border-border bg-background/50 px-3 py-2">
                       <span className="text-xs text-muted-foreground">
-                        {a.quantity > 1 && a.watts > 0
-                          ? `${a.quantity} × ${a.watts}W × ${a.hours}h`
-                          : `${a.watts}W × ${a.hours}h`}
+                        Subtotal normalizado
                       </span>
                       <span className="font-display text-sm font-bold text-solar tabular-nums">
                         {formatNumber(subtotalWh, 0)} Wh/día
