@@ -28,7 +28,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
   const update = (id: string, field: keyof Appliance, value: string | number) => {
     onChange(
       appliances.map((a) =>
-        a.id === id ? { ...a, [field]: field === 'name' || field === 'frequency' ? value : Number(value) } : a
+        a.id === id ? { ...a, [field]: field === 'name' ? value : Number(value) } : a
       )
     );
   };
@@ -44,7 +44,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
   const addRow = () => {
     onChange([
       ...appliances,
-      { id: Date.now().toString(), name: '', watts: 0, hours: 0, quantity: 1, frequency: 'day' },
+      { id: Date.now().toString(), name: '', watts: 0, hours: 0, quantity: 1, frecuenciaDias: 1 },
     ]);
   };
 
@@ -76,8 +76,9 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
           const watts = Number(r[2]) >= 0 ? Number(r[2]) : 0;
           const hours = Number(r[3]) >= 0 ? Number(r[3]) : 0;
 
-          const rawFreq = r[4] !== undefined && r[4] !== null ? String(r[4]).toLowerCase().trim() : 'day';
-          const frequency: 'day' | 'week' = rawFreq.includes('sem') || rawFreq.includes('week') || rawFreq === 'semana' ? 'week' : 'day';
+          // Leer frecuencia de días (por defecto 1 = diario)
+          const freqParsed = Number(r[4]);
+          const frecuenciaDias = !isNaN(freqParsed) && freqParsed >= 1 && freqParsed <= 7 ? freqParsed : 1;
 
           if (name && watts > 0) {
             newAppliances.push({
@@ -86,7 +87,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
               quantity,
               watts,
               hours,
-              frequency,
+              frecuenciaDias,
             });
           }
         }
@@ -104,9 +105,9 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
 
   const downloadTemplate = () => {
     const templateData = [
-      { Carga: 'Lampara1', Cantidad: 12, Potencia_W: 12, Horas: 4, Frecuencia: 'day' },
-      { Carga: 'Nevera', Cantidad: 2, Potencia_W: 150, Horas: 12, Frecuencia: 'day' },
-      { Carga: 'Lavadora', Cantidad: 1, Potencia_W: 1000, Horas: 6, Frecuencia: 'week' },
+      { Carga: 'Lampara', Cantidad: 12, Potencia_W: 12, Horas: 4, Frecuencia_Dias: 1 },
+      { Carga: 'Nevera', Cantidad: 1, Potencia_W: 150, Horas: 12, Frecuencia_Dias: 1 },
+      { Carga: 'Lavadora', Cantidad: 1, Potencia_W: 1000, Horas: 2, Frecuencia_Dias: 2 },
     ];
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
@@ -116,7 +117,8 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
 
   const getEffectiveHours = (a: Appliance) => {
     const rawHours = a.hours || 0;
-    return a.frequency === 'week' ? rawHours / 7 : rawHours;
+    const freq = a.frecuenciaDias && a.frecuenciaDias >= 1 ? a.frecuenciaDias : 1;
+    return rawHours / freq;
   };
 
   const totalDiario = appliances.reduce(
@@ -199,17 +201,17 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
               <Table>
                 <TableHeader>
                   <TableRow className="border-border bg-muted/40 hover:bg-muted/40">
-                    <TableHead className="w-[24%]">Electrodoméstico</TableHead>
-                    <TableHead className="w-[14%] text-center">Cantidad</TableHead>
-                    <TableHead className="w-[14%]">Potencia (W)</TableHead>
-                    <TableHead className="w-[22%]">Tiempo de uso</TableHead>
-                    <TableHead className="w-[18%] text-right">Subtotal (Wh/día)</TableHead>
+                    <TableHead className="w-[22%]">Electrodoméstico</TableHead>
+                    <TableHead className="w-[12%] text-center">Cantidad</TableHead>
+                    <TableHead className="w-[12%]">Potencia (W)</TableHead>
+                    <TableHead className="w-[26%]">Tiempo y frecuencia de uso</TableHead>
+                    <TableHead className="w-[20%] text-right">Subtotal (Wh/día)</TableHead>
                     <TableHead className="w-[8%]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {appliances.map((a) => {
-                    const freq = a.frequency || 'day';
+                    const freqDias = a.frecuenciaDias || 1;
                     const effectiveHours = getEffectiveHours(a);
                     const subtotalW = a.watts * a.quantity;
                     const subtotalWh = a.watts * effectiveHours * a.quantity;
@@ -284,20 +286,26 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                               value={a.hours || ''}
                               onChange={(e) => update(a.id, 'hours', e.target.value)}
                               placeholder="0"
-                              className="h-8 w-20 tabular-nums"
+                              className="h-8 w-16 tabular-nums"
                             />
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">h /</span>
                             <select
-                              value={freq}
-                              onChange={(e) => update(a.id, 'frequency', e.target.value)}
+                              value={freqDias}
+                              onChange={(e) => update(a.id, 'frecuenciaDias', e.target.value)}
                               className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                             >
-                              <option value="day">horas/día</option>
-                              <option value="week">horas/sem</option>
+                              <option value={1}>1 día (diario)</option>
+                              <option value={2}>cada 2 días</option>
+                              <option value={3}>cada 3 días</option>
+                              <option value={4}>cada 4 días</option>
+                              <option value={5}>cada 5 días</option>
+                              <option value={6}>cada 6 días</option>
+                              <option value={7}>cada 7 días (sem)</option>
                             </select>
                           </div>
-                          {freq === 'week' && a.hours > 0 && (
+                          {freqDias > 1 && a.hours > 0 && (
                             <p className="mt-1 text-[11px] text-muted-foreground">
-                              Equiv: {formatNumber(effectiveHours, 1)} h/día (÷ 7)
+                              Prorrateo: {formatNumber(effectiveHours, 1)} h/día ({a.hours}h ÷ {freqDias} días)
                             </p>
                           )}
                         </TableCell>
@@ -356,7 +364,7 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
             {/* Mobile: Tarjetas */}
             <div className="space-y-3 md:hidden">
               {appliances.map((a) => {
-                const freq = a.frequency || 'day';
+                const freqDias = a.frecuenciaDias || 1;
                 const effectiveHours = getEffectiveHours(a);
                 const subtotalWh = a.watts * effectiveHours * a.quantity;
 
@@ -431,8 +439,8 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                       </div>
                     </div>
 
-                    <div className="mt-2 space-y-1">
-                      <label className="text-xs text-muted-foreground">Tiempo de uso</label>
+                    <div className="mt-3 space-y-1">
+                      <label className="text-xs text-muted-foreground">Tiempo y frecuencia de uso</label>
                       <div className="flex items-center gap-2">
                         <Input
                           type="number"
@@ -441,20 +449,26 @@ export function LoadTable({ appliances, onChange }: LoadTableProps) {
                           value={a.hours || ''}
                           onChange={(e) => update(a.id, 'hours', e.target.value)}
                           placeholder="0"
-                          className="h-8 flex-1 tabular-nums"
+                          className="h-8 w-20 tabular-nums"
                         />
+                        <span className="text-xs text-muted-foreground">h cada</span>
                         <select
-                          value={freq}
-                          onChange={(e) => update(a.id, 'frequency', e.target.value)}
-                          className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                          value={freqDias}
+                          onChange={(e) => update(a.id, 'frecuenciaDias', e.target.value)}
+                          className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                         >
-                          <option value="day">Horas / día</option>
-                          <option value="week">Horas / semana</option>
+                          <option value={1}>1 día (diario)</option>
+                          <option value={2}>2 días</option>
+                          <option value={3}>3 días</option>
+                          <option value={4}>4 días</option>
+                          <option value={5}>5 días</option>
+                          <option value={6}>6 días</option>
+                          <option value={7}>7 días (sem)</option>
                         </select>
                       </div>
-                      {freq === 'week' && a.hours > 0 && (
+                      {freqDias > 1 && a.hours > 0 && (
                         <p className="text-[11px] text-muted-foreground">
-                          Equivale a {formatNumber(effectiveHours, 1)} h/día (dividido entre 7)
+                          Equivale a {formatNumber(effectiveHours, 1)} h/día ({a.hours}h ÷ {freqDias} días)
                         </p>
                       )}
                     </div>
