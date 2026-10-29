@@ -6,7 +6,8 @@ export interface Appliance {
   watts: number;
   hours: number;
   quantity: number;
-  frequency?: 'day' | 'week';
+  frequency?: string;
+  frecuenciaDias?: number; // <--- Añade esta línea aquí
 
 }
 
@@ -98,7 +99,9 @@ export function calculate(
 ): SolarResults {
   const getEffectiveHours = (a: Appliance) => {
     const rawHours = a.hours || 0;
-    return a.frequency === 'week' ? rawHours / 7 : rawHours;
+    // Si usa frecuenciaDias (1 a 7), dividimos entre ese valor. Si por compatibilidad viene 'week', dividimos entre 7, sino por defecto 1.
+    const divisor = a.frecuenciaDias && a.frecuenciaDias >= 1 ? a.frecuenciaDias : (a.frequency === 'week' ? 7 : 1);
+    return rawHours / divisor;
   };
 
   const eCA = appliances.reduce(
